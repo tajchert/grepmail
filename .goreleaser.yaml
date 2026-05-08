@@ -1,0 +1,36 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: grepmail
+    main: ./cmd/grepmail
+    binary: grepmail
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+brews:
+  - name: grepmail
+    homepage: "https://github.com/tajchert/grepmail"
+    description: "Fast, grep-style CLI for searching and exploring mbox mail archives"
+    license: "MIT"
+    repository:
+      owner: tajchert
+      name: homebrew-tap
+    directory: Formula
+    test: |
+      assert_match "grepmail", shell_output("#{bin}/grepmail help")
