@@ -18,9 +18,6 @@ sidecar index makes repeated queries answer in milliseconds.
 brew install tajchert/tap/grepmail
 ```
 
-(The fully-qualified name auto-taps `tajchert/homebrew-tap`, so no
-separate `brew tap` step is needed.)
-
 ### From source
 
 ```sh
@@ -96,7 +93,7 @@ are Go regular expressions; pass `-i` for case-insensitive matching.
 - `count`: integer count.
 - `ids`: one Message-ID per line.
 
-## Performance notes
+## Performance
 
 - Streaming search reads the file once with a 1 MiB buffered reader. On a
   modern SSD, header-only queries (e.g. `--from`, `--subject`, date ranges)
@@ -106,33 +103,47 @@ are Go regular expressions; pass `-i` for case-insensitive matching.
   milliseconds regardless of file size.
 - Body searches (`--body`, `--match`, attachment filters) need to read
   every candidate's bytes. The indexed path memory-maps the mbox so body
-  slices are zero-copy, and body matching is fanned out across a worker
-  pool (up to `GOMAXPROCS`, capped at 8). Combine body filters with
-  specific header filters whenever possible — header filters prune
-  candidates before any body work happens.
+  slices are zero-copy, and body matching is fanned out across all
+  available cores. Combining body filters with specific header filters is
+  the single biggest win — header filters prune candidates before any
+  body work happens.
 - The sidecar index stores offsets plus pre-decoded headers for every
-  message. It is roughly 0.1% of the mbox size and is invalidated
+  message. It's roughly 0.1% of the mbox size and is invalidated
   automatically when the mbox's size or modtime changes.
 
-### Measured speedups
+### How fast is it?
 
-Benchmarks on a 710 MB / 2,474-message Gmail Takeout, warm cache, 10-core
-Apple Silicon, 5-run averages. *Before* is the initial release; *after*
-includes the mmap, parallel-body and attachment-scan changes.
+Numbers below are from a 710 MB / 2,474-message Gmail Takeout on a 10-core
+Apple Silicon laptop, warm cache, indexed, 5-run averages.
 
-| Query | Before | After | Speedup |
-|---|---|---|---|
-| `count --from noreply` (header-only) | ~3 ms | ~3 ms | — |
-| `count --body github` (literal) | 230 ms | 73 ms | 3.2× |
-| `count --body invoice -i` (literal, case-insens) | 8.09 s | 0.16 s | **51×** |
-| `count --body '(?i)invoice\|receipt\|payment'` (regex) | 20.6 s | 8.3 s | 2.5× |
-| `count --attachment-name '\.pdf$'` | 1.51 s | 116 ms | 13× |
+| Query | Time |
+|---|---|
+| `grepmail count --from noreply` (header-only) | <1 ms |
+| `grepmail count --since 2025-01-01` (header-only) | <1 ms |
+| `grepmail count --from github --body invoice -i` (header-prefiltered) | <1 ms |
+| `grepmail count --body github` (literal) | 70 ms |
+| `grepmail count --body invoice -i` (literal, case-insens) | 160 ms |
+| `grepmail count --attachment-name '\.pdf$'` | 120 ms |
+| `grepmail count --body '(?i)invoice\|receipt\|payment'` (regex) | 8.5 s |
 
-Plain literal patterns skip the regex engine entirely (`bytes.Contains` on
-arm64 uses NEON), which is why case-insensitive literal queries see the
-biggest jump. Anything with regex metacharacters still goes through
-`*regexp.Regexp`, parallelised across all `GOMAXPROCS` cores. Wins scale
-up on multi-GB archives where body-regex CPU dominates.
+For comparison, the equivalent line-counting `grep` runs over the same
+file (which doesn't actually parse messages — it counts matching lines):
+
+| Query | Time | Speedup |
+|---|---|---|
+| `grep -c github` | 2.5 s | grepmail is **35×** faster |
+| `grep -ic invoice` | 8.9 s | grepmail is **54×** faster |
+| `grep -Eic 'invoice\|receipt\|payment'` | 21 s | grepmail is **2.5×** faster |
+
+Two things to note:
+
+1. Header-only and header-prefiltered queries don't open the mbox at all
+   — they answer straight from the index. Adding a `--from` or `--since`
+   filter to a body query usually drops the time to milliseconds.
+2. Literal `--body` patterns (the common case) skip the regex engine and
+   use `bytes.Contains` directly — that's where the 35–50× wins over grep
+   come from. Patterns with regex metacharacters still beat grep, but
+   the gap is smaller because both end up doing similar regex work.
 
 ## License
 
