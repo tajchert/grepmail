@@ -115,12 +115,11 @@ func runIndexed(opts runOptions, idx *index.File, w output.Writer, needBody, nee
 
 	// Body matching dominates CPU on large mboxes — parallelize it.
 	// Header-only queries stay serial (per-entry work is too small for
-	// worker dispatch overhead to pay off).
+	// worker dispatch overhead to pay off). On Apple Silicon's 10–16
+	// core M-series, body regex scales near-linearly so we use the
+	// full GOMAXPROCS rather than capping.
 	if needBody {
 		workers := runtime.GOMAXPROCS(0)
-		if workers > 8 {
-			workers = 8
-		}
 		if workers >= 2 {
 			return runIndexedParallel(opts, idx, w, mf, needRaw, workers)
 		}
