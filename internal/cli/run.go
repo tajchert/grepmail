@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/tajchert/grepmail/internal/filter"
 	"github.com/tajchert/grepmail/internal/index"
@@ -103,31 +105,56 @@ func runIndexed(opts runOptions, idx *index.File, w output.Writer, needBody, nee
 	}
 	defer mf.Close()
 
+	// Body matching dominates CPU on large mboxes — parallelize it.
+	// Header-only queries stay serial (per-entry work is too small for
+	// worker dispatch overhead to pay off).
+	if needBody {
+		workers := runtime.GOMAXPROCS(0)
+		if workers > 8 {
+			workers = 8
+		}
+		if workers >= 2 {
+			return runIndexedParallel(opts, idx, w, mf, needRaw, workers)
+		}
+	}
+	return runIndexedSerial(opts, idx, w, mf, needBody, needRaw)
+}
+
+// evalEntry runs the filter pipeline on one entry. Returns (hit, ok=true)
+// if the entry passes both header and (when applicable) body filters.
+func evalEntry(opts runOptions, mf *mbox.MappedFile, i int, e *index.Entry, needBody, needRaw bool) (output.Hit, bool) {
+	view := entryToView(e, i)
+	if !opts.spec.MatchHeaders(&view) {
+		return output.Hit{}, false
+	}
+	var raw, body, header []byte
+	if needBody || needRaw {
+		raw = mf.Slice(e.Offset, e.Length)
+		if e.HeaderEnd > 0 && e.HeaderEnd <= int64(len(raw)) {
+			body = raw[e.HeaderEnd:]
+			if nl := indexByte(raw, '\n'); nl >= 0 {
+				header = raw[nl+1 : e.HeaderEnd]
+			}
+		}
+	}
+	if opts.spec.NeedsBody() && !opts.spec.MatchBody(body, header, raw) {
+		return output.Hit{}, false
+	}
+	hit := output.Hit{Entry: *e, Body: body}
+	if needRaw {
+		hit.Raw = raw
+	}
+	return hit, true
+}
+
+func runIndexedSerial(opts runOptions, idx *index.File, w output.Writer, mf *mbox.MappedFile, needBody, needRaw bool) error {
 	hits := 0
 	for i := range idx.Entries {
-		e := &idx.Entries[i]
-		view := entryToView(e, i)
-		if !opts.spec.MatchHeaders(&view) {
+		hit, ok := evalEntry(opts, mf, i, &idx.Entries[i], needBody, needRaw)
+		if !ok {
 			continue
 		}
-
-		var raw, body, header []byte
-		if needBody || needRaw {
-			raw = mf.Slice(e.Offset, e.Length)
-			if e.HeaderEnd > 0 && e.HeaderEnd <= int64(len(raw)) {
-				body = raw[e.HeaderEnd:]
-				if nl := indexByte(raw, '\n'); nl >= 0 {
-					header = raw[nl+1 : e.HeaderEnd]
-				}
-			}
-		}
-		if opts.spec.NeedsBody() {
-			if !opts.spec.MatchBody(body, header, raw) {
-				continue
-			}
-		}
-
-		if err := w.Write(output.Hit{Entry: *e, Raw: raw, Body: body}); err != nil {
+		if err := w.Write(hit); err != nil {
 			return err
 		}
 		hits++
@@ -136,6 +163,86 @@ func runIndexed(opts runOptions, idx *index.File, w output.Writer, needBody, nee
 		}
 	}
 	return nil
+}
+
+// runIndexedParallel fans entries out to a worker pool, preserving the
+// original entry order on the output side via a queue of per-job result
+// channels. Stop is signalled when the limit is reached or the writer
+// errors; in flight workers drain naturally.
+func runIndexedParallel(opts runOptions, idx *index.File, w output.Writer, mf *mbox.MappedFile, needRaw bool, workers int) error {
+	type result struct {
+		hit output.Hit
+		ok  bool
+	}
+	type job struct {
+		i  int
+		e  *index.Entry
+		rc chan result
+	}
+
+	jobs := make(chan job, workers*2)
+	ordered := make(chan chan result, workers*4)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	signalStop := func() { stopOnce.Do(func() { close(stop) }) }
+
+	var wg sync.WaitGroup
+	for k := 0; k < workers; k++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				hit, ok := evalEntry(opts, mf, j.i, j.e, true, needRaw)
+				j.rc <- result{hit: hit, ok: ok}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(ordered)
+		defer close(jobs)
+		for i := range idx.Entries {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			rc := make(chan result, 1)
+			select {
+			case ordered <- rc:
+			case <-stop:
+				return
+			}
+			select {
+			case jobs <- job{i: i, e: &idx.Entries[i], rc: rc}:
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	hits := 0
+	var firstErr error
+	for rc := range ordered {
+		r := <-rc
+		if !r.ok {
+			continue
+		}
+		if firstErr != nil {
+			continue
+		}
+		if err := w.Write(r.hit); err != nil {
+			firstErr = err
+			signalStop()
+			continue
+		}
+		hits++
+		if opts.limit > 0 && hits >= opts.limit {
+			signalStop()
+		}
+	}
+	wg.Wait()
+	return firstErr
 }
 
 func indexByte(b []byte, c byte) int {
