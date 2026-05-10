@@ -99,12 +99,33 @@ are Go regular expressions; pass `-i` for case-insensitive matching.
 - Streaming search reads the file once with a 1 MiB buffered reader. On a
   modern SSD, header-only queries (e.g. `--from`, `--subject`, date ranges)
   run at roughly the disk's sequential read speed.
-- Body searches (`--body`, `--match`, `--has-attachment`) require reading
-  every message body. Build an index *and* use specific header filters to
-  prune candidates before the body scan kicks in.
+- With a sidecar index, header-only queries are answered straight from the
+  index without opening the mbox at all — typical runs are a few
+  milliseconds regardless of file size.
+- Body searches (`--body`, `--match`, attachment filters) need to read
+  every candidate's bytes. The indexed path memory-maps the mbox so body
+  slices are zero-copy, and body matching is fanned out across a worker
+  pool (up to `GOMAXPROCS`, capped at 8). Combine body filters with
+  specific header filters whenever possible — header filters prune
+  candidates before any body work happens.
 - The sidecar index stores offsets plus pre-decoded headers for every
   message. It is roughly 0.1% of the mbox size and is invalidated
   automatically when the mbox's size or modtime changes.
+
+### Measured speedups
+
+Benchmarks on a 710 MB / 2,474-message Gmail Takeout, warm cache, 10-core
+Apple Silicon, 5-run averages. *Before* is the initial release; *after*
+includes the mmap, parallel-body and attachment-scan changes.
+
+| Query | Before | After | Speedup |
+|---|---|---|---|
+| `count --from noreply` (header-only) | ~3 ms | ~3 ms | — |
+| `count --body github` (literal) | 232 ms | 80 ms | 2.9× |
+| `count --body '(?i)invoice\|receipt\|payment'` | 20.6 s | 9.0 s | 2.3× |
+| `count --attachment-name '\.pdf$'` | 1.51 s | 116 ms | 13× |
+
+Wins scale up on multi-GB archives where body-regex CPU dominates.
 
 ## License
 
