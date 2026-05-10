@@ -26,6 +26,23 @@ Commands:
   stats     Print high-level stats (count, size, date range, top senders).
   help      Show this help.
 
+Performance tips (read this first — large mboxes get dramatically faster):
+  * Build an index once with 'grepmail index <mbox>'. Header-only queries
+    (--from, --to, --subject, --since, --until, --id) are then answered
+    from the index in milliseconds without opening the mbox at all.
+  * Always pre-filter with header filters when you can. Combining
+    '--from foo --body bar' is much faster than '--body bar' alone:
+    header filters prune candidates before any body bytes are read.
+  * Plain literal --body patterns (no regex metacharacters) skip the
+    regex engine and run several × faster. Only use regex syntax (|, .,
+    *, +, [...], etc.) when you actually need it. '-i' is fine — literal
+    case-insensitive search is still fast.
+  * For attachment filename matching use --attachment-name (targeted,
+    fast) rather than --body (scans whole bodies).
+  * Skip 'grepmail index' for small mboxes (<100 MB) or one-off queries —
+    the streaming path is plenty fast and avoids the index build cost.
+  * Avoid '--no-index' unless debugging; it forces a full streaming scan.
+
 Run 'grepmail <command> --help' for command-specific flags.
 `
 
