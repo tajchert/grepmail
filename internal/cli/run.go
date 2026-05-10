@@ -97,11 +97,11 @@ func runStreaming(opts runOptions, w output.Writer, needBody, needRaw bool) erro
 }
 
 func runIndexed(opts runOptions, idx *index.File, w output.Writer, needBody, needRaw bool) error {
-	f, err := os.Open(opts.mboxPath)
+	mf, err := mbox.OpenMapped(opts.mboxPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer mf.Close()
 
 	hits := 0
 	for i := range idx.Entries {
@@ -113,13 +113,9 @@ func runIndexed(opts runOptions, idx *index.File, w output.Writer, needBody, nee
 
 		var raw, body, header []byte
 		if needBody || needRaw {
-			raw = make([]byte, e.Length)
-			if _, err := f.ReadAt(raw, e.Offset); err != nil && !errors.Is(err, io.EOF) {
-				return err
-			}
+			raw = mf.Slice(e.Offset, e.Length)
 			if e.HeaderEnd > 0 && e.HeaderEnd <= int64(len(raw)) {
 				body = raw[e.HeaderEnd:]
-				// Re-extract header (skip From line).
 				if nl := indexByte(raw, '\n'); nl >= 0 {
 					header = raw[nl+1 : e.HeaderEnd]
 				}
