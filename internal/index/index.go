@@ -105,24 +105,36 @@ func Build(path string, progressEvery int, progress func(count int, bytesRead in
 
 func headerEndOf(m *mbox.Message, f io.ReaderAt) int64 {
 	// Re-derive the headerEnd by reading the message until the blank line.
-	const probe = 64 * 1024
-	buf := make([]byte, probe)
-	n, _ := f.ReadAt(buf, m.Offset)
-	buf = buf[:n]
-	// Skip the From line.
-	nl := bytes.IndexByte(buf, '\n')
-	if nl < 0 {
-		return m.Length
+	// Grow the probe geometrically so messages with unusually large header
+	// blocks (>64KB Received chains, etc.) don't get a wrong HeaderEnd.
+	const initial = 64 * 1024
+	probe := int64(initial)
+	if probe > m.Length {
+		probe = m.Length
 	}
-	rest := buf[nl+1:]
-	// Find "\n\n" or "\n\r\n".
-	if i := bytes.Index(rest, []byte("\n\n")); i >= 0 {
-		return int64(nl + 1 + i + 2)
+	for {
+		buf := make([]byte, probe)
+		n, _ := f.ReadAt(buf, m.Offset)
+		buf = buf[:n]
+		nl := bytes.IndexByte(buf, '\n')
+		if nl < 0 {
+			return m.Length
+		}
+		rest := buf[nl+1:]
+		if i := bytes.Index(rest, []byte("\n\n")); i >= 0 {
+			return int64(nl + 1 + i + 2)
+		}
+		if i := bytes.Index(rest, []byte("\n\r\n")); i >= 0 {
+			return int64(nl + 1 + i + 3)
+		}
+		if int64(n) >= m.Length || probe >= m.Length {
+			return m.Length
+		}
+		probe *= 2
+		if probe > m.Length {
+			probe = m.Length
+		}
 	}
-	if i := bytes.Index(rest, []byte("\n\r\n")); i >= 0 {
-		return int64(nl + 1 + i + 3)
-	}
-	return m.Length
 }
 
 func mimeType(ct string) (string, error) {
