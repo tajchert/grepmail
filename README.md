@@ -15,9 +15,11 @@ sidecar index makes repeated queries answer in milliseconds.
 ### Homebrew
 
 ```sh
-brew tap tajchert/tap
 brew install tajchert/tap/grepmail
 ```
+
+(The fully-qualified name auto-taps `tajchert/homebrew-tap`, so no
+separate `brew tap` step is needed.)
 
 ### From source
 
