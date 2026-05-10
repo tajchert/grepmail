@@ -144,50 +144,94 @@ func (s *Spec) MatchBody(body, header, raw []byte) bool {
 // looksLikeAttachment is a quick heuristic: multipart message containing a
 // part with Content-Disposition: attachment or a filename= parameter.
 func looksLikeAttachment(header, body []byte) bool {
-	ct := bytes.ToLower(headerValue(header, []byte("content-type")))
-	if !bytes.Contains(ct, []byte("multipart/")) {
+	ct := headerValue(header, []byte("content-type"))
+	if !containsFold(ct, []byte("multipart/")) {
 		// A non-multipart message with Content-Disposition: attachment is rare
 		// but possible.
-		cd := bytes.ToLower(headerValue(header, []byte("content-disposition")))
-		return bytes.Contains(cd, []byte("attachment"))
+		cd := headerValue(header, []byte("content-disposition"))
+		return containsFold(cd, []byte("attachment"))
 	}
-	low := bytes.ToLower(body)
-	return bytes.Contains(low, []byte("content-disposition: attachment")) ||
-		bytes.Contains(low, []byte("filename="))
+	return containsFold(body, []byte("content-disposition: attachment")) ||
+		containsFold(body, []byte("filename="))
 }
 
 func attachmentNameMatches(body []byte, re *regexp.Regexp) bool {
-	// Cheap scan for filename="..." or filename=... occurrences.
-	low := body
+	// Cheap scan for filename="..." or filename=... occurrences. We search
+	// case-insensitively without lowercasing the whole body each iteration.
+	needle := []byte("filename=")
+	rest := body
 	for {
-		i := bytes.Index(bytes.ToLower(low), []byte("filename="))
+		i := indexFold(rest, needle)
 		if i < 0 {
 			return false
 		}
-		end := i + len("filename=")
-		// Quoted form.
-		rest := low[end:]
+		after := rest[i+len(needle):]
 		var name []byte
-		if len(rest) > 0 && rest[0] == '"' {
-			rest = rest[1:]
-			j := bytes.IndexByte(rest, '"')
+		if len(after) > 0 && after[0] == '"' {
+			after = after[1:]
+			j := bytes.IndexByte(after, '"')
 			if j < 0 {
 				return false
 			}
-			name = rest[:j]
+			name = after[:j]
 		} else {
-			j := bytes.IndexAny(rest, ";\r\n ")
+			j := bytes.IndexAny(after, ";\r\n ")
 			if j < 0 {
-				name = rest
+				name = after
 			} else {
-				name = rest[:j]
+				name = after[:j]
 			}
 		}
 		if re.Match(name) {
 			return true
 		}
-		low = low[end:]
+		rest = rest[i+len(needle):]
 	}
+}
+
+// indexFold returns the index of the first ASCII-case-insensitive match of
+// needle in haystack, or -1. needle must already be lowercase ASCII.
+func indexFold(haystack, needleLower []byte) int {
+	if len(needleLower) == 0 {
+		return 0
+	}
+	first := needleLower[0]
+	first2 := first
+	if first >= 'a' && first <= 'z' {
+		first2 = first - 32
+	}
+	for i := 0; i+len(needleLower) <= len(haystack); i++ {
+		c := haystack[i]
+		if c != first && c != first2 {
+			continue
+		}
+		if equalFoldASCII(haystack[i:i+len(needleLower)], needleLower) {
+			return i
+		}
+	}
+	return -1
+}
+
+func containsFold(haystack, needleLower []byte) bool {
+	return indexFold(haystack, needleLower) >= 0
+}
+
+// equalFoldASCII compares a and bLower (already lowercase ASCII) under
+// ASCII case folding. Faster than bytes.EqualFold for ASCII-only needles.
+func equalFoldASCII(a, bLower []byte) bool {
+	if len(a) != len(bLower) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		c := a[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 32
+		}
+		if c != bLower[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func headerValue(header []byte, key []byte) []byte {
