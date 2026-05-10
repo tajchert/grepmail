@@ -121,11 +121,16 @@ includes the mmap, parallel-body and attachment-scan changes.
 | Query | Before | After | Speedup |
 |---|---|---|---|
 | `count --from noreply` (header-only) | ~3 ms | ~3 ms | — |
-| `count --body github` (literal) | 232 ms | 80 ms | 2.9× |
-| `count --body '(?i)invoice\|receipt\|payment'` | 20.6 s | 9.0 s | 2.3× |
+| `count --body github` (literal) | 230 ms | 73 ms | 3.2× |
+| `count --body invoice -i` (literal, case-insens) | 8.09 s | 0.16 s | **51×** |
+| `count --body '(?i)invoice\|receipt\|payment'` (regex) | 20.6 s | 8.3 s | 2.5× |
 | `count --attachment-name '\.pdf$'` | 1.51 s | 116 ms | 13× |
 
-Wins scale up on multi-GB archives where body-regex CPU dominates.
+Plain literal patterns skip the regex engine entirely (`bytes.Contains` on
+arm64 uses NEON), which is why case-insensitive literal queries see the
+biggest jump. Anything with regex metacharacters still goes through
+`*regexp.Regexp`, parallelised across all `GOMAXPROCS` cores. Wins scale
+up on multi-GB archives where body-regex CPU dominates.
 
 ## License
 
