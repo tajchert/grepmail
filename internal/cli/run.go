@@ -99,11 +99,19 @@ func runStreaming(opts runOptions, w output.Writer, needBody, needRaw bool) erro
 }
 
 func runIndexed(opts runOptions, idx *index.File, w output.Writer, needBody, needRaw bool) error {
-	mf, err := mbox.OpenMapped(opts.mboxPath)
-	if err != nil {
-		return err
+	// Only mmap the source when we actually need to read message bytes.
+	// Header-only queries are answered entirely from the index, and the
+	// mmap setup costs (tens of ms on multi-GB files on darwin) are pure
+	// overhead in that case.
+	var mf *mbox.MappedFile
+	if needBody || needRaw {
+		var err error
+		mf, err = mbox.OpenMapped(opts.mboxPath)
+		if err != nil {
+			return err
+		}
+		defer mf.Close()
 	}
-	defer mf.Close()
 
 	// Body matching dominates CPU on large mboxes — parallelize it.
 	// Header-only queries stay serial (per-entry work is too small for
