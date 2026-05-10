@@ -192,11 +192,28 @@ go build -o grepmail ./cmd/grepmail
 
 ## Release / homebrew
 
-The intended release flow is:
+The Homebrew tap (`tajchert/homebrew-tap`) builds grepmail from the
+source tarball via `go build` — there are no prebuilt binaries and no
+goreleaser/CI wiring (yet). Cutting a release is a three-step manual
+flow:
 
-1. Tag the commit (`git tag v0.x.y`).
-2. `goreleaser release` builds darwin/linux binaries and writes a homebrew
-   formula into the `tajchert/homebrew-tap` repo.
+1. **Tag and push:** `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`.
+2. **Compute the tarball SHA:**
+   ```sh
+   curl -sL https://github.com/tajchert/grepmail/archive/refs/tags/vX.Y.Z.tar.gz \
+     | shasum -a 256
+   ```
+3. **Update the tap formula** in `tajchert/homebrew-tap`'s
+   `Formula/grepmail.rb` — bump the `url` to the new tag and replace
+   `sha256` with the value from step 2. Commit and push the tap repo.
+   Mirror the same change in this repo's `Formula/grepmail.rb` so the
+   two stay in sync.
 
-Until the tap exists, `Formula/grepmail.rb` here is a hand-written
-template usable for local-tap testing.
+Verify with `brew install --build-from-source tajchert/tap/grepmail`
+(untap/retap first if a previous version is cached).
+
+There's a `.goreleaser.yaml` checked in but no GitHub Action invokes
+it. If brew users start asking for prebuilt binaries, wire up
+`goreleaser/goreleaser-action@v6` on `push: tags: ['v*']` with a
+`HOMEBREW_TAP_GITHUB_TOKEN` secret and the manual flow above goes
+away.
