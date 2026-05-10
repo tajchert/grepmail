@@ -9,7 +9,9 @@ A single-binary CLI that searches large mbox archives. Performance target:
 header-only queries on a 1 GB mbox should answer in well under a second on
 a warm cache; with the sidecar index, the same queries answer in
 milliseconds regardless of file size (we're iterating a slice, not parsing
-mail).
+mail). Body-search queries on the indexed path are mmapped and fanned
+out across all available cores; literal `--body` patterns skip the regex
+engine entirely.
 
 ## Code map
 
@@ -72,6 +74,22 @@ The header view is a lightweight struct populated either from a parsed
 abstraction needed to share the filter engine between the streaming and
 indexed runners.
 
+### Literal `--body` fast-path
+
+When the user's `--body` pattern has no regex metacharacters
+(`regexp.QuoteMeta(pat) == pat`), `flags.build` populates
+`Spec.BodyLiteral` (and `BodyLiteralFold` when `-i` is set) alongside
+the compiled `BodyRe`. `MatchBody` prefers the literal path
+(`bytes.Contains` or `indexFold`) over the regex engine. On arm64 the
+NEON-tuned `bytes.IndexByte` makes this dramatically faster — measured
+~50× on case-insensitive literal queries against a 700 MB mbox.
+Patterns with metacharacters still flow through `*regexp.Regexp`
+unchanged.
+
+The `indexFold` / `containsFold` helpers (also used by the attachment
+heuristics) do ASCII case-insensitive substring search without
+allocating a lowercased copy of the haystack.
+
 ## The sidecar index
 
 The index is a gob-encoded `index.File` with a magic-byte prefix
@@ -95,19 +113,41 @@ just re-index.
 `internal/cli/run.go::runSearch` is the dispatcher:
 
 1. If `--no-index` is set or no index is present, stream the mbox.
-2. Otherwise iterate the index. For each entry, run header filters against
-   the entry's pre-decoded fields. If body filters or `mbox`/`raw` output
-   are needed, `ReadAt` the message bytes and run body filters.
+2. Otherwise call `runIndexed`, which:
+   - Skips opening the mbox entirely when the query is header-only — the
+     whole answer comes from `idx.Entries`.
+   - When body or raw bytes are needed, memory-maps the mbox via
+     `mbox.OpenMapped` (syscall.Mmap on unix, `*os.File` fallback
+     elsewhere). `MappedFile.Slice(off, len)` returns a zero-copy view
+     into the mapping; this replaces the per-message
+     `make([]byte, e.Length) + ReadAt` allocations the original code did.
+   - For body-needing queries, fans entries out across a worker pool
+     sized to `runtime.GOMAXPROCS(0)` (`runIndexedParallel`). Output
+     order is preserved by enqueuing a per-job result channel onto a
+     queue; the drain reads them in submission order. `--limit` and
+     writer errors signal an early stop via a once-closed `stop`
+     channel; in-flight workers drain naturally.
+   - Header-only queries stay serial (`runIndexedSerial`) — per-entry
+     work is too cheap for worker dispatch to pay back.
 
-This gives us two important properties:
+`evalEntry` is the shared per-entry pipeline used by both serial and
+parallel paths.
 
-- A pure-header query on an indexed mbox doesn't open the mbox at all
-  unless an output format requires raw bytes. (Today we still open it
-  eagerly; that's a future optimization, not a bug.)
+Two important properties this gives us:
+
+- Pure-header queries on an indexed mbox never read or mmap the file.
 - Adding a header filter to a body-search query effectively prunes the
   candidate set before any body I/O happens, because `MatchBody` only runs
   when `MatchHeaders` accepts. That's why combinations like
   `--from foo --body bar` are dramatically faster than `--body bar` alone.
+
+### Memory-mapped reads
+
+`internal/mbox/mmap_unix.go` (`//go:build unix`) wraps `syscall.Mmap`;
+`mmap_other.go` is a `*os.File`-backed fallback with the same API. Both
+expose `Slice(off,len) []byte` and satisfy `io.ReaderAt`. Slices are
+valid until `Close`; writers in `internal/output` consume them
+synchronously per `Write` call so this is safe.
 
 ## Style and conventions
 
