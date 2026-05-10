@@ -5,6 +5,7 @@
 package cli
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"regexp"
@@ -78,6 +79,19 @@ func (ff *filterFlags) build() (*filter.Spec, error) {
 		if *b.dst, err = filter.CompileRegex(b.pat, ff.ignoreCase); err != nil {
 			return nil, err
 		}
+	}
+
+	// Literal --body fast-path: when the pattern has no regex
+	// metacharacters, swap regex matching for bytes.Index / indexFold.
+	// On large bodies this is several × faster than the regex engine,
+	// and arm64's NEON-tuned bytes.IndexByte makes it faster still.
+	if ff.body != "" && regexp.QuoteMeta(ff.body) == ff.body {
+		lit := []byte(ff.body)
+		if ff.ignoreCase {
+			lit = bytes.ToLower(lit)
+			s.BodyLiteralFold = true
+		}
+		s.BodyLiteral = lit
 	}
 
 	if ff.since != "" {

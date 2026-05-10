@@ -34,6 +34,13 @@ type Spec struct {
 	Subject     *regexp.Regexp
 	HeaderField map[string]*regexp.Regexp // arbitrary --header K=PAT
 
+	// BodyLiteral, when set, short-circuits BodyRe with a plain
+	// substring search. It's populated when the user's --body pattern
+	// has no regex metacharacters; bytes.Index / indexFold then beats
+	// the regex engine handily on multi-MB bodies.
+	BodyLiteral     []byte
+	BodyLiteralFold bool
+
 	Since *time.Time
 	Until *time.Time
 
@@ -47,7 +54,7 @@ type Spec struct {
 
 // NeedsBody reports whether evaluating the spec requires reading the body.
 func (s *Spec) NeedsBody() bool {
-	if s.BodyRe != nil || s.AnyRe != nil {
+	if s.BodyRe != nil || s.BodyLiteral != nil || s.AnyRe != nil {
 		return true
 	}
 	if s.HasAttachment != nil || s.AttachmentName != nil {
@@ -118,7 +125,16 @@ func (s *Spec) MatchHeaders(v *HeaderView) bool {
 // MatchBody runs body/any predicates against the given body bytes. raw is
 // the full message bytes (used for AnyRe). header is the raw header block.
 func (s *Spec) MatchBody(body, header, raw []byte) bool {
-	if s.BodyRe != nil && !s.BodyRe.Match(body) {
+	switch {
+	case s.BodyLiteral != nil:
+		if s.BodyLiteralFold {
+			if indexFold(body, s.BodyLiteral) < 0 {
+				return false
+			}
+		} else if !bytes.Contains(body, s.BodyLiteral) {
+			return false
+		}
+	case s.BodyRe != nil && !s.BodyRe.Match(body):
 		return false
 	}
 	if s.HeaderRe != nil && !s.HeaderRe.Match(header) {
