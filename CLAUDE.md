@@ -192,28 +192,40 @@ go build -o grepmail ./cmd/grepmail
 
 ## Release / homebrew
 
-The Homebrew tap (`tajchert/homebrew-tap`) builds grepmail from the
-source tarball via `go build` — there are no prebuilt binaries and no
-goreleaser/CI wiring (yet). Cutting a release is a three-step manual
-flow:
+Releases use goreleaser to build prebuilt binaries (darwin/linux ×
+amd64/arm64), upload them to a GitHub release, and regenerate the
+formula in `tajchert/homebrew-tap`. End users get a precompiled binary
+— `brew install tajchert/tap/grepmail` does **not** invoke `go build`.
 
-1. **Tag and push:** `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`.
-2. **Compute the tarball SHA:**
+There is no CI wiring: `goreleaser release` is run manually from this
+working directory. Cutting a release:
+
+1. **Tag and push:**
    ```sh
-   curl -sL https://github.com/tajchert/grepmail/archive/refs/tags/vX.Y.Z.tar.gz \
-     | shasum -a 256
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
    ```
-3. **Update the tap formula** in `tajchert/homebrew-tap`'s
-   `Formula/grepmail.rb` — bump the `url` to the new tag and replace
-   `sha256` with the value from step 2. Commit and push the tap repo.
-   Mirror the same change in this repo's `Formula/grepmail.rb` so the
-   two stay in sync.
+2. **Export tokens** (one-time per shell):
+   - `GITHUB_TOKEN` — `repo` scope, used to create the GitHub release here.
+   - `HOMEBREW_TAP_GITHUB_TOKEN` — `repo` scope on `tajchert/homebrew-tap`,
+     used to push the regenerated formula.
+3. **Run goreleaser:**
+   ```sh
+   goreleaser release --clean
+   ```
 
-Verify with `brew install --build-from-source tajchert/tap/grepmail`
-(untap/retap first if a previous version is cached).
+This produces `dist/` with the tarballs + `dist/homebrew/Formula/grepmail.rb`,
+publishes the GitHub release, and commits the updated formula to the tap
+repo. After it succeeds, sync the in-repo `Formula/grepmail.rb` with the
+generated one so the two stay aligned (it's a reference copy — the tap
+repo is what brew actually reads).
 
-There's a `.goreleaser.yaml` checked in but no GitHub Action invokes
-it. If brew users start asking for prebuilt binaries, wire up
-`goreleaser/goreleaser-action@v6` on `push: tags: ['v*']` with a
-`HOMEBREW_TAP_GITHUB_TOKEN` secret and the manual flow above goes
-away.
+Verify with `brew install tajchert/tap/grepmail` (untap/retap first if a
+previous version is cached). The install should be near-instant — no go
+toolchain involved.
+
+Dry runs without publishing: `goreleaser release --snapshot --clean`.
+
+If brew users want a from-source `--HEAD` install in the future, add a
+`head do ... depends_on "go" => :build ... end` block back to the
+formula. Currently dropped to keep the formula minimal.

@@ -1,5 +1,7 @@
 version: 2
 
+project_name: grepmail
+
 before:
   hooks:
     - go mod tidy
@@ -10,18 +12,27 @@ builds:
     binary: grepmail
     env:
       - CGO_ENABLED=0
-    goos: [darwin, linux]
-    goarch: [amd64, arm64]
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w
+      - -X main.version={{ .Version }}
 
 archives:
-  - format: tar.gz
+  - id: default
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
-
-checksum:
-  name_template: "checksums.txt"
+    formats:
+      - tar.gz
+    files:
+      - README.md
+      - LICENSE
 
 brews:
   - name: grepmail
@@ -34,3 +45,48 @@ brews:
     directory: Formula
     test: |
       assert_match "grepmail", shell_output("#{bin}/grepmail help")
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:.*$"
+      order: 0
+    - title: Fixes
+      regexp: "^.*fix[(\\w)]*:.*$"
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: tajchert
+    name: grepmail
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+  footer: |
+    ---
+    **Install (Homebrew):**
+    ```bash
+    brew install tajchert/tap/grepmail
+    ```
+
+    **Install (Go):**
+    ```bash
+    go install github.com/tajchert/grepmail/cmd/grepmail@v{{ .Version }}
+    ```

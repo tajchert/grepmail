@@ -1,20 +1,53 @@
-# Hand-written template for the homebrew tap. After cutting a release with
-# goreleaser, the tap repo (tajchert/homebrew-tap) will host the
-# auto-generated version of this. Keep both in sync until the release flow
-# is automated.
+# typed: false
+# frozen_string_literal: true
+
+# Mirror of what goreleaser auto-generates in tajchert/homebrew-tap on
+# each release. The canonical formula is whatever the tap repo serves at
+# install time; this copy exists for reference and gets refreshed by
+# `goreleaser release`. Do not hand-edit unless cutting a release
+# manually — bump version, url, and sha256 for each arch.
 class Grepmail < Formula
   desc "Fast, grep-style CLI for searching and exploring mbox mail archives"
   homepage "https://github.com/tajchert/grepmail"
-  url "https://github.com/tajchert/grepmail/archive/refs/tags/v0.2.1.tar.gz"
-  sha256 "7c78f28c4d0669439953a05492bad5865b8a02b65b07a76576022b6eb2f4bbfd"
+  version "0.2.1"
   license "MIT"
-  head "https://github.com/tajchert/grepmail.git", branch: "main"
 
-  depends_on "go" => :build
+  on_macos do
+    if Hardware::CPU.intel?
+      url "https://github.com/tajchert/grepmail/releases/download/v0.2.1/grepmail_0.2.1_darwin_amd64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
-  def install
-    ldflags = "-s -w -X main.version=#{version}"
-    system "go", "build", *std_go_args(ldflags: ldflags), "./cmd/grepmail"
+      def install
+        bin.install "grepmail"
+      end
+    end
+    if Hardware::CPU.arm?
+      url "https://github.com/tajchert/grepmail/releases/download/v0.2.1/grepmail_0.2.1_darwin_arm64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+
+      def install
+        bin.install "grepmail"
+      end
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
+      url "https://github.com/tajchert/grepmail/releases/download/v0.2.1/grepmail_0.2.1_linux_amd64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+
+      def install
+        bin.install "grepmail"
+      end
+    end
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+      url "https://github.com/tajchert/grepmail/releases/download/v0.2.1/grepmail_0.2.1_linux_arm64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+
+      def install
+        bin.install "grepmail"
+      end
+    end
   end
 
   test do
