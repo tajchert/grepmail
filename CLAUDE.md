@@ -160,7 +160,7 @@ synchronously per `Write` call so this is safe.
 - The mbox file is opened for reading only. The tool never writes back to
   it. Index writes are atomic via temp-file + rename.
 - We treat the sample.mbox in this repo as a test fixture but it's
-  gitignored at the repo level (it's hundreds of MB of personal data).
+  gitignored via `*.mbox` (it's hundreds of MB of personal data).
 
 ## Adding a new filter
 
@@ -200,25 +200,47 @@ formula in `tajchert/homebrew-tap`. End users get a precompiled binary
 There is no CI wiring: `goreleaser release` is run manually from this
 working directory. Cutting a release:
 
-1. **Tag and push:**
-   ```sh
-   git tag -a vX.Y.Z -m "vX.Y.Z"
-   git push origin vX.Y.Z
-   ```
+1. **Make sure `main` is clean and pushed.** Land every change you want
+   in the release *first*, including any incidental fixes (`.gitignore`,
+   docs, dead-code cleanup). goreleaser refuses to run with a dirty
+   working tree, and it requires the tag to point at `HEAD` — so any
+   stray commit after tagging means you have to move the tag, which is
+   a force-update on a public ref.
 2. **Export tokens** (one-time per shell):
    - `GITHUB_TOKEN` — `repo` scope, used to create the GitHub release here.
    - `HOMEBREW_TAP_GITHUB_TOKEN` — `repo` scope on `tajchert/homebrew-tap`,
      used to push the regenerated formula.
-3. **Run goreleaser:**
+   - If `gh auth status` shows a `repo`-scoped token covering both repos,
+     `export GITHUB_TOKEN=$(gh auth token); export HOMEBREW_TAP_GITHUB_TOKEN=$GITHUB_TOKEN`
+     is enough.
+3. **Tag last, then immediately run goreleaser:**
    ```sh
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
    goreleaser release --clean
    ```
+   Do not commit anything between the tag push and the goreleaser run.
+   If you do, `release failed ... git tag vX.Y.Z was not made against
+   commit <HEAD-sha>` and you'll have to delete + re-push the tag.
 
 This produces `dist/` with the tarballs + `dist/homebrew/Formula/grepmail.rb`,
 publishes the GitHub release, and commits the updated formula to the tap
 repo. After it succeeds, sync the in-repo `Formula/grepmail.rb` with the
 generated one so the two stay aligned (it's a reference copy — the tap
 repo is what brew actually reads).
+
+If the working tree is dirty (or the tag-vs-HEAD mismatch trips), the
+fix is always: land the missing commit on `main`, push, then move the
+tag — *don't* `--skip=validate` past it, those checks exist because a
+released artifact built from a not-yet-public tree is unreproducible.
+
+```sh
+git push --delete origin vX.Y.Z
+git tag -d vX.Y.Z
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
+goreleaser release --clean
+```
 
 Verify with `brew install tajchert/tap/grepmail` (untap/retap first if a
 previous version is cached). The install should be near-instant — no go
