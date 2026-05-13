@@ -22,7 +22,7 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X main.version={{ .Version }}
+      - -X github.com/tajchert/grepmail/internal/cli.Version={{ .Version }}
 
 archives:
   - id: default
@@ -44,7 +44,7 @@ brews:
       name: homebrew-tap
     directory: Formula
     test: |
-      assert_match "grepmail", shell_output("#{bin}/grepmail help")
+      assert_match "grepmail", shell_output("#{bin}/grepmail version")
 
 checksum:
   name_template: checksums.txt

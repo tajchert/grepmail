@@ -51,6 +51,6 @@ class Grepmail < Formula
   end
 
   test do
-    assert_match "grepmail", shell_output("#{bin}/grepmail help")
+    assert_match "grepmail", shell_output("#{bin}/grepmail version")
   end
 end

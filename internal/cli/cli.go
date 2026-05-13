@@ -12,6 +12,9 @@ import (
 	"github.com/tajchert/grepmail/internal/mbox"
 )
 
+// Version is set via -ldflags at build time; defaults to "dev".
+var Version = "dev"
+
 const usage = `grepmail — fast CLI search for mbox files
 
 Usage:
@@ -24,6 +27,7 @@ Commands:
   show      Print one message in full (--id, --offset, or --n).
   index     Build a sidecar index for fast repeated queries.
   stats     Print high-level stats (count, size, date range, top senders).
+  version   Print build version.
   help      Show this help.
 
 Performance tips (read this first — large mboxes get dramatically faster):
@@ -56,6 +60,9 @@ func Run(args []string) int {
 	switch cmd {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
+		return 0
+	case "version", "-v", "--version":
+		fmt.Println("grepmail", Version)
 		return 0
 	case "search", "list":
 		return cmdSearch(rest, "summary")
