@@ -1,4 +1,5 @@
 /grepmail
 /dist/
 *.grepmail-index
+*.mbox
 .DS_Store
